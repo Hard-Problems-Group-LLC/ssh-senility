@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-ssh-senility.py
 SSH Key Discovery Tool (Full Audit Version)
 -------------------------------------------
 Iterates through a specified directory (defaults to ~/.ssh), identifies valid 
@@ -8,6 +7,7 @@ private keys, and attempts to authenticate against a target host via SSH.
 
 Features:
 - Tests ALL valid private keys rather than bailing on the first success.
+- Bypasses ~/.ssh/config and ssh-agent to prevent false positive authentications.
 - Outputs a colorized, UTF-8 formatted summary table of all results.
 - Uses native SSH with BatchMode and -T to prevent interactive prompts.
 - Configurable random delays to avoid rate-limiting or fail2ban triggers.
@@ -50,14 +50,16 @@ def is_private_key(filepath: Path) -> bool:
 
 def test_ssh_connection(key_path: Path, username: str, hostname: str) -> bool:
     """
-    Attempts an SSH connection using the specified key.
+    Attempts an SSH connection strictly using the specified key.
     Returns True if authentication succeeds, False otherwise.
     """
     command = [
         "ssh",
-        "-T",
+        "-F", "/dev/null",          # Ignore ~/.ssh/config to prevent host config overrides
+        "-T",                       # Disable pseudo-terminal allocation
         "-i", str(key_path),
-        "-o", "BatchMode=yes",
+        "-o", "IdentitiesOnly=yes", # Ignore ssh-agent, use ONLY the key passed via -i
+        "-o", "BatchMode=yes",      # Disable interactive prompts
         "-o", "PasswordAuthentication=no",
         "-o", "PubkeyAuthentication=yes",
         "-o", "StrictHostKeyChecking=accept-new",
@@ -108,7 +110,6 @@ def print_summary_table(results: list):
     for res in results:
         key_padded = res['key'].ljust(max_key_len)
         if res['success']:
-            # Pad the string itself, then apply colors to the word so table alignment doesn't break
             status = f"{Colors.GREEN}Success{Colors.RESET} "
         else:
             status = f"{Colors.RED}Failed{Colors.RESET}  "
@@ -160,7 +161,6 @@ def main():
     
     results = []
     
-    # Iterate through keys and test them
     for i, key in enumerate(keys_to_test, start=1):
         print(f"[{i}/{len(keys_to_test)}] Testing key: {Colors.BOLD}{key.name}{Colors.RESET}...", end=" ", flush=True)
         
@@ -172,13 +172,11 @@ def main():
         else:
             print(f"{Colors.RED}Failed. \u274C{Colors.RESET}")
             
-        # Apply the random delay, except after the last key
         if i < len(keys_to_test):
             delay = random.uniform(args.min_delay, args.max_delay)
             print(f"    {Colors.YELLOW}Sleeping for {delay:.2f} seconds...{Colors.RESET}")
             time.sleep(delay)
             
-    # Output the final table
     print_summary_table(results)
 
 if __name__ == "__main__":
